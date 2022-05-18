@@ -1,0 +1,168 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS CloudFormation template to automatically provision AWS Neptune Graph Database.
+
+Resources:
+  NeptuneVPC:
+    Type: "AWS::EC2::VPC"
+    Properties:
+      EnableDnsSupport: "true"
+      EnableDnsHostnames: "true"
+      CidrBlock: "10.0.0.0/16"
+
+  NeptuneVPCSercurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group to access Neptune in VPC
+      GroupName: NeptuneSecurityGroup
+      VpcId:
+        Ref: NeptuneVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  NeptuneSubnet1:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref NeptuneVPC
+      AvailabilityZone: us-east-1a
+      CidrBlock: 10.0.0.0/24
+      MapPublicIpOnLaunch: true
+
+  NeptuneSubnet2:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref NeptuneVPC
+      AvailabilityZone: us-east-1b
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+
+  # Neptune DB subnet group
+  NeptuneDBSubnetGroup:
+    Type: "AWS::Neptune::DBSubnetGroup"
+    Properties:
+      DBSubnetGroupDescription: "CloudFormation managed Neptune DB Subnet Group - test-subnet-group"
+      DBSubnetGroupName: neptunedbsubnetgroup
+      SubnetIds:
+        - Ref: NeptuneSubnet1
+        - Ref: NeptuneSubnet2
+
+  NeptuneDBCluster:
+    Type: "AWS::Neptune::DBCluster"
+    Properties:
+      AvailabilityZones:
+      - us-east-1a
+      - us-east-1b
+      BackupRetentionPeriod: 1
+      DBClusterIdentifier: test-graph-db
+      DBClusterParameterGroupName: !Ref NeptuneDBClusterParameterGroup
+      DBSubnetGroupName: !Ref NeptuneDBSubnetGroup
+      IamAuthEnabled: true
+      #Port: !Ref Port
+      #PreferredBackupWindow: !Ref NeptuneDBClusterPreferredBackupWindow
+      #PreferredMaintenanceWindow: !Ref NeptuneDBClusterPreferredMaintenanceWindow
+      #SnapshotIdentifier: # Enable for the DB cluster snapshot from which you want to restore
+      VpcSecurityGroupIds:
+        - !Ref  NeptuneVPCSercurityGroup
+
+  NeptuneDBInstance:
+    Type: "AWS::Neptune::DBInstance"
+    Properties:
+      #AllowMajorVersionUpgrade: !Ref MajorVersionUpgrade
+      #AutoMinorVersionUpgrade: !Ref MinorVersionUpgrade
+      DBClusterIdentifier: !Ref NeptuneDBCluster #Note: If you specify this property, the default deletion policy is Delete. Otherwise, the default deletion policy is Snapshot.
+      DBInstanceClass: db.t3.medium
+      DBInstanceIdentifier: !Ref NeptuneDBCluster #Note: If you specify a name, you cannot perform updates that require replacement of this resource. You can perform updates that require no or some interruption. If you must replace the resource, specify a new name.
+      DBParameterGroupName: !Ref NeptuneDBParameterGroup
+      #DBSnapshotIdentifier: # Enable for the DB cluster snapshot from which you want to restore
+      DBSubnetGroupName: !Ref NeptuneDBSubnetGroup
+      #PreferredMaintenanceWindow: !Ref NeptuneDBInstancePreferredMaintenanceWindow
+
+  # Neptune DB cluster parameter group
+  NeptuneDBClusterParameterGroup:
+    Type: "AWS::Neptune::DBClusterParameterGroup"
+    Properties:
+      Description: "CloudFormation managed Neptune DB Cluster Parameter Group - test-cluster-parameter-group"
+      Parameters:
+        neptune_enable_audit_log: 0
+      Family : neptune1
+      Name : test-neptune-cluster-parameter-group
+
+  # Neptune DB parameter group
+  NeptuneDBParameterGroup:
+    Type: "AWS::Neptune::DBParameterGroup"
+    Properties:
+      Description: "CloudFormation managed Neptune DB Parameter Group - test-parameter-group"
+      Parameters:
+        neptune_query_timeout: 3000
+      Family : neptune1
+      Name : test-parameter-group
+
+  ### IAM Role ###
+
+  # Neptune IAM role - allows access to CloudWatch Logs and S3
+  NeptuneRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: 'neptune-test-iam-role-us-east'
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - monitoring.rds.amazonaws.com
+            - rds.amazonaws.com
+          Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - !Ref NeptuneCloudWatchPolicy
+        - !Ref NeptuneS3Policy
+
+  # Neptune CloudWatch policy
+  NeptuneCloudWatchPolicy:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      Description: Default policy for CloudWatch logs
+      ManagedPolicyName: neptune-test-cw-policy-us-east
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: "EnableLogGroups"
+            Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:PutRetentionPolicy
+            Resource:
+              - !Sub arn:${AWS::Partition}:logs:*:*:log-group:/aws/neptune/*
+          - Sid: "EnableLogStreams"
+            Effect: Allow
+            Action:
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            - logs:DescriptLogStreams
+            - logs:GetLogEvents
+            Resource:
+              - !Sub arn:${AWS::Partition}:logs:*:*:log-group:/aws/neptune/*:log-stream:*
+
+  # Neptune S3 policy for access to the data sets
+  NeptuneS3Policy:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      Description: Neptune default policy for S3 access for data load
+      ManagedPolicyName: "neptune-test-s3-policy-us-east"
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: "AllowNeptuneAccessToS3"
+            Effect: Allow
+            Action:
+              - 's3:Get*'
+              - 's3:List*'
+            Resource:
+              - 'arn:aws:s3:::*' # S3 Bucket needs to be added here

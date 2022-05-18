@@ -1,0 +1,124 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  neptune-lambda
+
+  Sample SAM Template for neptune-lambda
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 3
+
+Parameters:
+  #NeptuneClusterId:
+  #  Description: Amazon Neptune DB cluster identifier.
+  #  Type: String
+
+  NeptuneClusterEndpoint:
+    Type: String
+    Description: Neptune Cluster Endpoint
+    AllowedPattern: .+
+
+  NeptuneClusterPort:
+    Type: String
+    Description: Neptune Cluster Port
+    Default: "8182"
+
+  NeptuneIAMAuth:
+    Type: String
+    Description: true to use IAM Auth, false for HTTPS
+    Default: false
+
+
+  NeptunePrivateSubnet1:
+    Description: Private subnet ID.
+    Type: AWS::EC2::Subnet::Id
+  
+  NeptunePrivateSubnet2:
+    Description: Private subnet ID.
+    Type: AWS::EC2::Subnet::Id
+  
+  NeptuneVPC:
+    Description: VPC ID.
+    Type: AWS::EC2::VPC::Id
+  
+  NeptuneSecurityGroupId:
+    Description: ID of a security group that the Lambda functions can use to access Neptune
+    Type: AWS::EC2::SecurityGroup::Id
+
+Resources:
+
+  LambdaSelfReferencingSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Self-referencing security group for Lambda
+      VpcId:
+        Ref: NeptuneVPC
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DeleteNetworkInterface
+                  - cloudwatch:*
+                  - lambda:*
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - neptune-db:*
+                Resource:
+                  Fn::Join:
+                    - ""
+                    - - "arn:aws:neptune-db:"
+                      - Ref: AWS::Region
+                      - ":"
+                      - Ref: AWS::AccountId
+                      - :*/*
+  #edit the arn (video (37:00))
+  #arn:aws:neptune-db:us-east-1:160785711776:cluster-XNAKAJBJGYCANF2SWC7BCEVOGI/*
+  NeptuneGremlinLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/
+      Handler: app.lambda_handler
+      Runtime: python3.9
+      Architectures:
+        - x86_64
+      Role:
+        Fn::GetAtt:
+          - LambdaExecutionRole
+          - Arn
+      VpcConfig:
+        SecurityGroupIds:
+          - Ref: LambdaSelfReferencingSecurityGroup
+          - Ref: NeptuneSecurityGroupId
+        SubnetIds:
+          - Ref: NeptunePrivateSubnet1
+          - Ref: NeptunePrivateSubnet2
+      Environment:
+          Variables:
+            neptuneEndpoint: !Ref NeptuneClusterEndpoint
+            neptunePort: !Ref NeptuneClusterPort
+            USE_IAM: !Ref NeptuneIAMAuth

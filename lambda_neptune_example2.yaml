@@ -1,0 +1,159 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Sample AWS Lambda function which interact with Neptune
+
+Parameters:
+
+  LambdaRuntime:
+    Type: String
+    Description: Lambda Runtime
+    Default: python3.6
+    AllowedValues:
+      - nodejs12.x
+      - python3.6
+      - ruby2.5
+
+  NeptuneSGs:
+    Type: List<AWS::EC2::SecurityGroup::Id>
+    Description: Neptune Security groups
+    AllowedPattern: .+
+
+  Subnets:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Neptune VPC Subnets
+    AllowedPattern: .+
+
+  NeptuneClusterEndpoint:
+    Type: String
+    Description: Neptune Cluster Endpoint
+    AllowedPattern: .+
+
+  NeptuneClusterPort:
+    Type: String
+    Description: Neptune Cluster Port
+    Default: "8182"
+
+  NeptuneBulkloadIAMRoleArn:
+    Type: String
+    Description: Neptune Bulkload IAM Role Arn
+
+  NeptuneLambdaIAMRoleArn:
+    Type: String
+    Description: Neptune Lambda Execution IAM Role Arn
+    Default: ""
+
+Mappings:
+
+  RuntimeMap:
+    nodejs12.x:
+      keyname: nodejs12x
+    python3.6:
+      keyname: python36
+    ruby2.5:
+      keyname: ruby25
+
+Conditions:
+  CreateLambaExecutionIAMRole:
+    Fn::Equals:
+      - Ref: NeptuneLambdaIAMRoleArn
+      - ""
+  GovcloudRegion:
+    Fn::Or:
+      - Fn::Equals:
+          - Ref: AWS::Region
+          - us-gov-west-1
+      - Fn::Equals:
+          - Ref: AWS::Region
+          - us-gov-east-1
+
+Resources:
+  NeptuneLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Role:
+        Fn::If:
+          - CreateLambaExecutionIAMRole
+          - Fn::GetAtt:
+              - LambdaExecutionRole
+              - Arn
+          - Ref: NeptuneLambdaIAMRoleArn
+      Code:
+        S3Bucket:
+          Fn::Join:
+            - ""
+            - - aws-neptune-customer-samples-
+              - Ref: AWS::Region
+        S3Key:
+          Fn::Join:
+            - /
+            - - lambda
+              - Fn::FindInMap:
+                  - RuntimeMap
+                  - Ref: LambdaRuntime
+                  - keyname
+              - lambda_function.zip
+      Runtime:
+        Ref: LambdaRuntime
+      Timeout: "10"
+      TracingConfig:
+        Mode: Active
+      VpcConfig:
+        SecurityGroupIds:
+          Ref: NeptuneSGs
+        SubnetIds:
+          Ref: Subnets
+      Environment:
+        Variables:
+          CLUSTER_ENDPOINT:
+            Ref: NeptuneClusterEndpoint
+          CLUSTER_PORT:
+            Ref: NeptuneClusterPort
+          BULKLOAD_IAM_ROLE_ARN:
+            Ref: NeptuneBulkloadIAMRoleArn
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Condition: CreateLambaExecutionIAMRole
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: NeptuneLambdaPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:*
+                Resource:
+                  Fn::If:
+                    - GovcloudRegion
+                    - Fn::Sub: arn:aws-us-gov:logs:*:*:*
+                    - Fn::Sub: arn:${AWS::Partition}:logs:*:*:*
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DetachNetworkInterface
+                  - ec2:DeleteNetworkInterface
+                  - neptune:*
+                Resource:
+                  - "*"
+
+Outputs:
+  NeptuneLambdaArn:
+    Description: Neptune Lambda Arn
+    Value:
+      Fn::GetAtt:
+        - NeptuneLambdaFunction
+        - Arn

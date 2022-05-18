@@ -1,0 +1,12 @@
+version = 0.1
+[default]
+[default.deploy]
+[default.deploy.parameters]
+stack_name = "neptune-lambda"
+s3_bucket = "aws-sam-cli-managed-default-samclisourcebucket-l9s7u7afdi1s"
+s3_prefix = "neptune-lambda"
+region = "us-east-1"
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = "NeptuneClusterEndpoint=\"database-1.cluster-c8anryrp4ycm.us-east-1.neptune.amazonaws.com\" NeptuneClusterPort=\"8182\" NeptuneIAMAuth=\"False\" NeptunePrivateSubnet1=\"subnet-0250152732ff8e3cd\" NeptunePrivateSubnet2=\"subnet-0ecd652e4ac46c804\" NeptuneVPC=\"vpc-04df410d27eab00f0\" NeptuneSecurityGroupId=\"sg-05fb08c678b106a95\""
+image_repositories = []
+confirm_changeset = true
